@@ -1,8 +1,14 @@
 // using express JS
-var express = require("express");
-var app = express();
+const express = require("express");
+const jwt = require('jsonwebtoken');
+const app = express();
+
 
 require('dotenv').config()
+
+
+// app.use(express.json());
+// app.use(express.urlencoded({extended: false}))
 
 // express formidable is used to parse the form data values
 var formidable = require("express-formidable");
@@ -61,6 +67,15 @@ app.use(function (request, result, next) {
     // continue the request
     next();
 });
+
+// Import nodemailer to send email
+const nodemailer = require('nodemailer');
+
+// Generate a unique token for password reset
+function generateToken() {
+    const token = Math.random().toString(36).substr(2) + Math.random().toString(36).substr(2);
+    return token;
+}
 
 // recursive function to get the file from uploaded
 function recursiveGetFile(files, _id) {
@@ -209,7 +224,7 @@ http.listen(port, function () {
     //     })
 
 
-    mongoClient.connect(process.env.MONGO_URL,  {
+    mongoClient.connect(process.env.MONGO_URL, {
         useUnifiedTopology: true
     }, function (error, client) {
 
@@ -229,6 +244,8 @@ http.listen(port, function () {
                 request: request
             });
         });
+
+
 
         // search files or folders
         app.get("/Search", async function (request, result) {
@@ -274,10 +291,104 @@ http.listen(port, function () {
 
         // get all files shared with logged-in user
         app.get("/SharedWithMe/:_id?", async function (request, result) {
+            const currentUser = request.user;
+            const fileId = request.params._id;
+            let sharedFiles = [];
+
+            if (fileId) {
+                // get shared file by id
+                const sharedFile = await database.collection('shared_files').findOne({ _id: ObjectId(fileId) });
+                sharedFiles.push(sharedFile);
+            } else {
+                // get all shared files for current user
+                sharedFiles = await database.collection('shared_files').find({ shared_with: currentUser.email }).toArray();
+            }
+
             result.render("SharedWithMe", {
-                "request": request
+                "request": request,
+                "sharedFiles": sharedFiles
             });
         });
+
+        // handle form submission for sharing file with another user via email
+        app.post("/SharedWithMe/:fileId/share", async function (request, result) {
+            const currentUser = request.user;
+            const fileId = request.params.fileId;
+            const { email } = request.body;
+
+            try {
+                // Find the file being shared
+                const file = await database.collection('files').findOne({ _id: ObjectId(fileId), owner: currentUser.email });
+                if (!file) {
+                    // If the file is not found or the user does not own it, return an error response
+                    return result.status(400).json({ message: "File not found or you do not have permission to share it" });
+                }
+
+                // Check if the user being shared with exists
+                const user = await database.collection('users').findOne({ email });
+                if (!user) {
+                    // If the user being shared with does not exist, return an error response
+                    return result.status(400).json({ message: "User not found" });
+                }
+
+                // Check if the user being shared with is the owner of the file
+                if (user.email === file.owner) {
+                    return result.status(400).json({ message: "You cannot share a file with its owner" });
+                }
+
+                // Create a new shared file record
+                const sharedFile = {
+                    file_id: file._id,
+                    shared_by: currentUser.email,
+                    shared_with: user.email,
+                    shared_at: new Date()
+                };
+                await database.collection('shared_files').insertOne(sharedFile);
+
+                // Send success response
+                result.status(200).json({ message: "File shared successfully" });
+            } catch (error) {
+                // If an error occurs, return an error response
+                console.error(error);
+                result.status(500).json({ message: "Internal server error" });
+            }
+        });
+
+        // handle form submission to share a file
+app.post("/shared-file", async function (request, response) {
+    try {
+      const fileId = req.fields.fileId;
+      const email = req.fields.email;
+  
+      // check if file exists
+      const file = await File.findById(fileId);
+      if (!file) {
+        return response.status(404).send("File not found");
+      }
+  
+      // check if user exists
+      const user = await User.findOne({ email: email });
+      if (!user) {
+        return response.status(404).send("User not found");
+      }
+  
+      // check if user already has access to the file
+      if (file.sharedWith.includes(user._id)) {
+        return response.status(400).send("File already shared with user");
+      }
+  
+      // add user to sharedWith array
+      file.sharedWith.push(user._id);
+      await file.save();
+  
+      response.redirect(`/SharedWithMe/${user._id}`);
+    } catch (error) {
+      console.error(error);
+      response.status(500).send("Internal server error");
+    }
+  });
+  
+
 
         app.post("/DeleteLink", async function (request, result) {
 
@@ -565,7 +676,7 @@ http.listen(port, function () {
                             });
 
                             request.session.status = "success";
-                            request.session.message = "Image has been uploaded. Try our premium version for image compression.";
+                            request.session.message = "Upload Request Successfull!";
 
                             result.redirect("/MyUploads/" + _id);
                         });
@@ -596,6 +707,107 @@ http.listen(port, function () {
         app.get("/Logout", function (request, result) {
             request.session.destroy();
             result.redirect("/");
+        });
+
+
+        // Route for forgot password page
+        app.get('/forgot-password', (req, res) => {
+            res.render('forgot-password');
+        });
+
+        // Handle form submission for forgot password
+        app.post('/forgot-password', async (req, res) => {
+            const email = req.fields.email;
+
+            // Check if email exists in the database
+            const user = await database.collection('users').findOne({ email: email });
+
+            if (!user) {
+                res.render('forgot-password', { error: 'Email not found' });
+                return;
+            }
+
+            // Generate one-time password link
+            const token = generateToken();
+            const resetUrl = `${mainURL}/reset-password/${token}`;
+
+            // Update user's reset token in the database
+            await database.collection('users').updateOne({ _id: user._id }, { $set: { reset_token: token } });
+
+            // Send password reset link to user's email
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASSWORD
+                }
+            });
+
+            const mailOptions = {
+                from: process.env.EMAIL_USER,
+                to: email,
+                subject: 'FileshareCP Password Reset',
+                html: `Please click <a href="${resetUrl}">here</a> to reset your password.`
+            };
+
+            transporter.sendMail(mailOptions, (error, info) => {
+                if (error) {
+                    console.log(error);
+                } else {
+                    console.log('Email sent: ' + info.response);
+                }
+            });
+
+            res.render('forgot-password', { message: 'Password reset link has been sent to your email' });
+        });
+
+        // Route for reset password page
+        app.get('/reset-password/:token', async (req, res) => {
+            const token = req.params.token;
+
+            // Check if token is valid and not expired
+            const user = await database.collection('users').findOne({ reset_token: token });
+
+            if (!user || new Date(user.reset_token_expire) < new Date()) {
+                return res.render('reset-password', { error: 'Invalid or expired token' });
+            }
+
+            res.render('reset-password', { token: token });
+        });
+
+        // Handle form submission for reset password
+        app.post('/reset-password/:token', async (req, res) => {
+            const { token } = req.params;
+            const { password, confirm_password } = req.fields.password;
+
+            try {
+                // Find user with matching reset token
+                const user = await database.collection('users').findOne({ reset_token: token });
+
+                if (!user || new Date(user.reset_token_expire) < new Date()) {
+                    return res.status(400).json({ message: 'Invalid or expired reset token' });
+                }
+
+                if (password !== confirm_password) {
+                    return res.status(400).json({ message: 'Passwords do not match' });
+                }
+
+                // Hash the new password
+                const hashedPassword = await bcrypt.hash(password, 10);
+
+                // Update user's password and reset token
+                user.password = hashedPassword;
+                user.reset_token = null;
+                user.reset_token_expire = null;
+                await database.collection('users').save(user);
+
+                // Send success response
+                res.status(200).json({ message: 'Password reset successful' });
+            } catch (err) {
+                // If an error occurs, return error response
+                console.error(err);
+                res.status(500).json({ message: 'Internal server error' });
+            }
         });
 
         // show page to login
