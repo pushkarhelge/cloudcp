@@ -208,6 +208,34 @@ function recursiveSearchShared(files, query) {
     }
 }
 
+
+// recursive function to get the folder from uploaded files
+
+function recursiveGetFolder(files,_id){
+    var singleFile = null;
+
+    for(var a=0;a<files.length;a++){
+        const file = files[a];
+
+        // return if file type is folder and ID is found
+        if(file.type == "folder"){
+            if(file._id == _id){
+                return file;
+            }
+
+            // if it has files, then do recursion
+            if(file.files.length>0){
+                singleFile = recursiveGetFolder(file.files, _id);
+                // return the file if found in sub-folders
+                if(singleFile!=null){
+                    return singleFile;
+                }
+            }
+        }
+    }
+}
+
+
 // start the http server
 http.listen(port, function () {
     console.log("Server started at " + mainURL);
@@ -355,39 +383,39 @@ http.listen(port, function () {
         });
 
         // handle form submission to share a file
-app.post("/shared-file", async function (request, response) {
-    try {
-      const fileId = req.fields.fileId;
-      const email = req.fields.email;
-  
-      // check if file exists
-      const file = await File.findById(fileId);
-      if (!file) {
-        return response.status(404).send("File not found");
-      }
-  
-      // check if user exists
-      const user = await User.findOne({ email: email });
-      if (!user) {
-        return response.status(404).send("User not found");
-      }
-  
-      // check if user already has access to the file
-      if (file.sharedWith.includes(user._id)) {
-        return response.status(400).send("File already shared with user");
-      }
-  
-      // add user to sharedWith array
-      file.sharedWith.push(user._id);
-      await file.save();
-  
-      response.redirect(`/SharedWithMe/${user._id}`);
-    } catch (error) {
-      console.error(error);
-      response.status(500).send("Internal server error");
-    }
-  });
-  
+        app.post("/shared-file", async function (request, response) {
+            try {
+                const fileId = req.fields.fileId;
+                const email = req.fields.email;
+
+                // check if file exists
+                const file = await File.findById(fileId);
+                if (!file) {
+                    return response.status(404).send("File not found");
+                }
+
+                // check if user exists
+                const user = await User.findOne({ email: email });
+                if (!user) {
+                    return response.status(404).send("User not found");
+                }
+
+                // check if user already has access to the file
+                if (file.sharedWith.includes(user._id)) {
+                    return response.status(400).send("File already shared with user");
+                }
+
+                // add user to sharedWith array
+                file.sharedWith.push(user._id);
+                await file.save();
+
+                response.redirect(`/SharedWithMe/${user._id}`);
+            } catch (error) {
+                console.error(error);
+                response.status(500).send("Internal server error");
+            }
+        });
+
 
 
         app.post("/DeleteLink", async function (request, result) {
@@ -610,24 +638,59 @@ app.post("/shared-file", async function (request, response) {
         });
 
         // view all files uploaded by logged-in user
-        app.get("/MyUploads", async function (request, result) {
-            if (request.session.user) {
+        // app.get("/MyUploads/:_id?", async function (request, result) {
+        //     const _id = request.params._id;
+        //     if (request.session.user) {
 
-                var user = await database.collection("users").findOne({
-                    "_id": ObjectId(request.session.user._id)
-                });
+        //         var user = await database.collection("users").findOne({
+        //             "_id": ObjectId(request.session.user._id)
+        //         });
 
-                var uploaded = user.uploaded;
+        //         var uploaded  = null;
+        //         var folderName = "";
+        //         var createdat = "";
 
-                result.render("MyUploads", {
-                    "request": request,
-                    "uploaded": uploaded
-                });
-                return false;
-            }
+        //         if(typeof _id=="undefined"){
+        //             uploaded = user.uploaded;
+        //         }
+        //         else{
+        //             var folderObj = await recursiveGetFolder(user.uploaded, _id);
 
-            result.redirect("/Login");
-        });
+        //             if(folderObj == null){
+        //                 request.status = "error";
+        //                 request.message = "Folder not found.";
+        //                 result.render("MyUploads", {
+        //                     "request": request
+        //                 });
+        //                 return false;
+        //             }
+        //             uploaded = folderObj.files;
+        //             folderName = folderObj.folderName;
+        //             createdAt = folderObj.createdAt;
+        //         }
+                
+        //         if(uploded == null){
+        //             request.status = "error";
+        //             request.message = "Directory not found."
+        //             result.render("MyUploads", {
+        //                 "request": request,
+        //             });
+        //             return false;
+        //         }
+
+
+        //         result.render("MyUploads", {
+        //             "request": request,
+        //             "uploaded": uploaded,
+        //             "_id": _id,
+        //             "folderName" : folderName,
+        //             "createdAt" : createdAt
+        //         });
+        //         return false;
+        //     }
+
+        //     result.redirect("/Login");
+        // });
 
         // upload new file
         app.post("/UploadFile", async function (request, result) {
@@ -707,108 +770,8 @@ app.post("/shared-file", async function (request, response) {
         app.get("/Logout", function (request, result) {
             request.session.destroy();
             result.redirect("/");
-        });
-
-
-        // Route for forgot password page
-        app.get('/forgot-password', (req, res) => {
-            res.render('forgot-password');
-        });
-
-        // Handle form submission for forgot password
-        app.post('/forgot-password', async (req, res) => {
-            const email = req.fields.email;
-
-            // Check if email exists in the database
-            const user = await database.collection('users').findOne({ email: email });
-
-            if (!user) {
-                res.render('forgot-password', { error: 'Email not found' });
-                return;
-            }
-
-            // Generate one-time password link
-            const token = generateToken();
-            const resetUrl = `${mainURL}/reset-password/${token}`;
-
-            // Update user's reset token in the database
-            await database.collection('users').updateOne({ _id: user._id }, { $set: { reset_token: token } });
-
-            // Send password reset link to user's email
-            const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASSWORD
-                }
-            });
-
-            const mailOptions = {
-                from: process.env.EMAIL_USER,
-                to: email,
-                subject: 'FileshareCP Password Reset',
-                html: `Please click <a href="${resetUrl}">here</a> to reset your password.`
-            };
-
-            transporter.sendMail(mailOptions, (error, info) => {
-                if (error) {
-                    console.log(error);
-                } else {
-                    console.log('Email sent: ' + info.response);
-                }
-            });
-
-            res.render('forgot-password', { message: 'Password reset link has been sent to your email' });
-        });
-
-        // Route for reset password page
-        app.get('/reset-password/:token', async (req, res) => {
-            const token = req.params.token;
-
-            // Check if token is valid and not expired
-            const user = await database.collection('users').findOne({ reset_token: token });
-
-            if (!user || new Date(user.reset_token_expire) < new Date()) {
-                return res.render('reset-password', { error: 'Invalid or expired token' });
-            }
-
-            res.render('reset-password', { token: token });
-        });
-
-        // Handle form submission for reset password
-        app.post('/reset-password/:token', async (req, res) => {
-            const { token } = req.params;
-            const { password, confirm_password } = req.fields.password;
-
-            try {
-                // Find user with matching reset token
-                const user = await database.collection('users').findOne({ reset_token: token });
-
-                if (!user || new Date(user.reset_token_expire) < new Date()) {
-                    return res.status(400).json({ message: 'Invalid or expired reset token' });
-                }
-
-                if (password !== confirm_password) {
-                    return res.status(400).json({ message: 'Passwords do not match' });
-                }
-
-                // Hash the new password
-                const hashedPassword = await bcrypt.hash(password, 10);
-
-                // Update user's password and reset token
-                user.password = hashedPassword;
-                user.reset_token = null;
-                user.reset_token_expire = null;
-                await database.collection('users').save(user);
-
-                // Send success response
-                res.status(200).json({ message: 'Password reset successful' });
-            } catch (err) {
-                // If an error occurs, return error response
-                console.error(err);
-                res.status(500).json({ message: 'Internal server error' });
-            }
-        });
+        });  
+          
 
         // show page to login
         app.get("/Login", function (request, result) {
@@ -903,6 +866,176 @@ app.post("/shared-file", async function (request, response) {
             result.render("Register", {
                 "request": request
             });
+        });
+
+
+        
+        // new Forgot Password
+
+        app.get("/ForgotPassword",function (request, result) {
+            result.render("ForgotPassword",{
+                "request":request
+            });
+        });
+
+        app.post("/SendRecoveryLink", async function (request,result){
+            const email = request.fields.email;
+
+            console.log(email);
+
+            // Check if email exists in the database
+            const user = await database.collection('users').findOne({ email: email });
+
+
+
+            if (user == null) {
+                request.status = "error";
+                request.message = "Email doesnot exists, Kindly Register First!"
+                result.render('ForgotPassword', { 
+                    "request" : request
+                 });
+                return false;
+            }
+            if (!user) {
+                result.render('ForgotPassword', { error: 'Email not found' });
+                return;
+            }
+
+            // Generate one-time password link
+            // const reset_token = generateToken(); 
+            const reset_token = new Date().getTime();
+            const resetUrl = `${mainURL}/ResetPassword/${email}/${reset_token}`;
+
+            // Update user's reset token in the database
+            await database.collection('users').updateOne({ "email" : email }, { $set: { "reset_token": reset_token } });
+
+            // Send password reset link to user's email
+            const transporter = nodemailer.createTransport({
+
+                service: 'gmail',
+                auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASSWORD
+                }
+            });
+
+            const mailOptions = {
+                from: process.env.EMAIL_USER,
+                to: email,
+                subject: 'FileshareCP Password Reset',
+                // text :"Please click the following link to rest your password :" +mainURL + "/ResetPassword/"+email+"/"+reset_token,
+                html: `Please click <a href="${resetUrl     }">here</a> to reset your password.`
+            };
+
+            transporter.sendMail(mailOptions, (error, info) => {
+                if (error) {
+                    console.log(error);
+                } else {
+                    console.log('Email sent: ' + info.response);
+                }
+
+                request.status = "success";
+                request.message = "Email has been sent with the link to recover the password.";
+
+                result.render('ForgotPassword', { 
+                    "request" : request
+                    // message: 'Password reset link has been sent to your email'
+                });
+
+            });            
+        });
+
+
+        app.get('/ResetPassword/:email/:reset_token', async function(request, result){
+
+            const email = request.params.email;
+            const reset_token = request.params.reset_token;
+
+            const user = await database.collection("users").findOne({
+                $and:[{
+                    "email":email
+                },{
+                    "reset_token": parseInt(reset_token)
+                }]
+            });
+
+            if(user == null){
+                request.status = "error";
+                request.message = "Link is Expired.";
+                result.render("Error",{
+                    "request": request
+                });
+                return false;
+            }
+            
+            result.render('ResetPassword', { 
+                "request": request,
+                "email": email,
+                "reset_token" : reset_token
+            });
+        });
+
+        app.post("/ResetPassword", async function(request,result){
+            const email = request.fields.email;
+            const reset_token = request.fields.reset_token;
+
+            const new_password = request.fields.new_password;
+            const confirm_password = request.fields.confirm_password;
+
+            if(new_password!=confirm_password){
+                request.status = "error";
+                request.message = "Password doesnot match."
+
+                result.render("ResetPassword",{
+                    "request" : request,
+                    "email" : email,
+                    "reset_token" : reset_token
+                });
+                return false;
+            }
+
+            const user = await database.collection("users").findOne({
+                $and: [{
+                    "email":email
+                },{
+                    "reset_token": parseInt(reset_token)
+                }]
+            });
+
+            if(user == null){
+                request.status = "error";
+                request.message = "Link is Expired.";
+
+                result.render("ResetPassword",{
+                    "request": request,
+                    "email" : email,
+                    "reset_token" : reset_token
+                });
+                return false;
+            }
+
+            bcrypt.hash(new_password,10,async function(error,hash){
+                await database.collection("users").findOneAndUpdate({
+                    $and: [{
+                        "email":email,
+                    },{
+                        "reset_token": parseInt(reset_token)
+                    }]  
+                }, {
+                    $set : {
+                        "reset_token": "",
+                        "password" : hash
+                    }
+                });
+                console.log("Password has been reset sucessfully. Please try login again");
+                request.status = "success";
+                request.message = "Password has been reset sucessfully. Please try login again"
+                
+                result.render("Login",{
+                    "request": request
+                });
+            });
+
         });
 
         // home page
