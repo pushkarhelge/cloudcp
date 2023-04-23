@@ -638,59 +638,24 @@ http.listen(port, function () {
         });
 
         // view all files uploaded by logged-in user
-        // app.get("/MyUploads/:_id?", async function (request, result) {
-        //     const _id = request.params._id;
-        //     if (request.session.user) {
+        app.get("/MyUploads", async function (request, result) {
+                    if (request.session.user) {
 
-        //         var user = await database.collection("users").findOne({
-        //             "_id": ObjectId(request.session.user._id)
-        //         });
+                        var user = await database.collection("users").findOne({
+                            "_id": ObjectId(request.session.user._id)
+                        });
 
-        //         var uploaded  = null;
-        //         var folderName = "";
-        //         var createdat = "";
+                        var uploaded = user.uploaded;
 
-        //         if(typeof _id=="undefined"){
-        //             uploaded = user.uploaded;
-        //         }
-        //         else{
-        //             var folderObj = await recursiveGetFolder(user.uploaded, _id);
+                        result.render("MyUploads", {
+                            "request": request,
+                            "uploaded": uploaded
+                        });
+                        return false;
+                    }
 
-        //             if(folderObj == null){
-        //                 request.status = "error";
-        //                 request.message = "Folder not found.";
-        //                 result.render("MyUploads", {
-        //                     "request": request
-        //                 });
-        //                 return false;
-        //             }
-        //             uploaded = folderObj.files;
-        //             folderName = folderObj.folderName;
-        //             createdAt = folderObj.createdAt;
-        //         }
-                
-        //         if(uploded == null){
-        //             request.status = "error";
-        //             request.message = "Directory not found."
-        //             result.render("MyUploads", {
-        //                 "request": request,
-        //             });
-        //             return false;
-        //         }
-
-
-        //         result.render("MyUploads", {
-        //             "request": request,
-        //             "uploaded": uploaded,
-        //             "_id": _id,
-        //             "folderName" : folderName,
-        //             "createdAt" : createdAt
-        //         });
-        //         return false;
-        //     }
-
-        //     result.redirect("/Login");
-        // });
+                    result.redirect("/Login");
+                });
 
         // upload new file
         app.post("/UploadFile", async function (request, result) {
@@ -779,6 +744,7 @@ http.listen(port, function () {
                 "request": request
             });
         });
+        
 
         // authenticate the user
         app.post("/Login", async function (request, result) {
